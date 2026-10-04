@@ -28,6 +28,14 @@ CREATE TABLE IF NOT EXISTS trials (
 )
 """
 
+# 迁移标记（如结果快照格式版本），避免每次启动重复校正
+_CREATE_META = """
+CREATE TABLE IF NOT EXISTS meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+)
+"""
+
 
 def _connect(db_path: Path | None = None) -> sqlite3.Connection:
     path = db_path or DB_PATH
@@ -35,6 +43,7 @@ def _connect(db_path: Path | None = None) -> sqlite3.Connection:
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     conn.execute(_CREATE)
+    conn.execute(_CREATE_META)
     return conn
 
 
@@ -93,3 +102,46 @@ def delete_trial(trial_id: int, db_path: Path | None = None) -> bool:
     with _connect(db_path) as conn:
         cur = conn.execute("DELETE FROM trials WHERE id = ?", (trial_id,))
         return cur.rowcount > 0
+
+
+def get_meta(key: str, db_path: Path | None = None) -> str | None:
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT value FROM meta WHERE key = ?", (key,)
+        ).fetchone()
+    return row["value"] if row is not None else None
+
+
+def set_meta(key: str, value: str, db_path: Path | None = None) -> None:
+    with _connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO meta (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, value),
+        )
+
+
+def all_snapshots(db_path: Path | None = None) -> list[dict]:
+    """全部记录的 (id, 输入, 结果快照)，供启动迁移按输入校正结果。"""
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT id, payload, result FROM trials ORDER BY id"
+        ).fetchall()
+    return [
+        {
+            "id": r["id"],
+            "payload": json.loads(r["payload"]),
+            "result": json.loads(r["result"]),
+        }
+        for r in rows
+    ]
+
+
+def update_trial_result(trial_id: int, result: dict,
+                        db_path: Path | None = None) -> None:
+    """就地更新已有记录的结果快照（编号、创建时间、输入均不变）。"""
+    with _connect(db_path) as conn:
+        conn.execute(
+            "UPDATE trials SET result = ? WHERE id = ?",
+            (json.dumps(result, ensure_ascii=False), trial_id),
+        )

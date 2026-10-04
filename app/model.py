@@ -73,6 +73,8 @@ def string_curve(groups: Sequence[Group]) -> StringCurve:
 
         V(I) = A_k - B_k I,  A_k = Σ Voc, B_k = Σ Voc/Isc
     对应电压区间 [w_{k+1}, w_k]，w_k = V(s_k)，反函数为线性。
+    零电压最小可行电流为最高档 s_1 = max Isc：I ≥ s_1 时全部组旁路、
+    串电压归零，故 I(0) = A_1 / B_1 = s_1（即首段系数）。
     """
     if not groups:
         raise ValueError("string must contain at least one group")
@@ -106,8 +108,9 @@ def string_curve(groups: Sequence[Group]) -> StringCurve:
         if v_hi - v_lo > MERGE_EPS:
             segments.append(LinearSeg(v_lo, v_hi, a_k / b_k, 1.0 / b_k))
 
-    # V=0 时最小可行电流：I(0) = A_m / B_m
-    i_at_zero = cum[-1][0] / cum[-1][1]
+    # V=0 的最小可行电流：I 升至最高 Isc 档 s_1 时全部组旁路、串电压归零，
+    # 故 I(0) = s_1 = max Isc = A_1 / B_1（首段系数，与正电压首段自然衔接）
+    i_at_zero = cum[0][0] / cum[0][1]
     return StringCurve(
         voc=w[-1],
         i_at_zero=i_at_zero,
