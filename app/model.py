@@ -106,8 +106,11 @@ def string_curve(groups: Sequence[Group]) -> StringCurve:
         if v_hi - v_lo > MERGE_EPS:
             segments.append(LinearSeg(v_lo, v_hi, a_k / b_k, 1.0 / b_k))
 
-    # V=0 时最小可行电流：I(0) = A_m / B_m
-    i_at_zero = cum[-1][0] / cum[-1][1]
+    # V=0 时使全串所有组电压归零的最小可行电流 = max(Isc_g)
+    # （I 达到最大 Isc 后每个组均已旁路）。注意不能用全组系数比 A_m/B_m：
+    # 那仅在最低压线性段延伸到 V=0（各组 Isc 全相等）时才等于 max(Isc)。
+    # 最低压段 [0, w_2] 只含 Isc 最大的组，其截距 a_1 即 max(Isc)。
+    i_at_zero = max(g.isc for g in groups)
     return StringCurve(
         voc=w[-1],
         i_at_zero=i_at_zero,

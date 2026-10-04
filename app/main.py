@@ -1,6 +1,7 @@
 """光伏旁路组重接线试算台 —— FastAPI 入口。"""
 
 import json
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -12,7 +13,36 @@ from . import db
 from .model import Group, evaluate_wiring, find_optimal
 from .validation import ValidationError, validate_payload
 
-app = FastAPI(title="光伏旁路组重接线试算台", version="1.0.0")
+
+def _rebuild_result(payload: dict) -> dict:
+    """按（保存的或当前的）输入重新求解并返回完整结果。"""
+    groups = validate_payload(payload)
+    return _solve(groups, payload["baseline"])
+
+
+def _correct_stored_snapshots() -> int:
+    """按保存的输入校正旧版结果快照（就地覆盖，不新增记录）。返回修正条数。"""
+    fixed = 0
+    for trial_id, payload, stored in db.iter_trial_payloads():
+        try:
+            rebuilt = _rebuild_result(payload)
+        except ValidationError:
+            continue  # 旧数据异常时保留原样，不影响启动
+        if rebuilt != stored:
+            db.update_result(trial_id, rebuilt)
+            fixed += 1
+    return fixed
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    # 容器重启后首次启动即按输入校正历史快照，保证重开/重启都返回正确端点
+    await run_in_threadpool(_correct_stored_snapshots)
+    yield
+
+
+app = FastAPI(title="光伏旁路组重接线试算台", version="1.0.1",
+              lifespan=lifespan)
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
@@ -121,6 +151,14 @@ async def get_trial(trial_id: int):
     if trial is None:
         return JSONResponse(status_code=404,
                             content={"detail": "试算记录不存在"})
+    # 惰性兜底：启动扫描未覆盖到的旧快照，重开时仍按保存的输入就地校正
+    try:
+        rebuilt = await run_in_threadpool(_rebuild_result, trial["payload"])
+    except ValidationError:
+        rebuilt = None
+    if rebuilt is not None and rebuilt != trial["result"]:
+        await run_in_threadpool(db.update_result, trial_id, rebuilt)
+        trial["result"] = rebuilt
     return trial
 
 

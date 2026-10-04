@@ -89,6 +89,26 @@ def get_trial(trial_id: int, db_path: Path | None = None) -> dict | None:
     }
 
 
+def update_result(trial_id: int, result: dict,
+                  db_path: Path | None = None) -> None:
+    """就地覆盖结果快照（用于按保存的输入校正旧结果），编号/输入/时间不变。"""
+    with _connect(db_path) as conn:
+        conn.execute(
+            "UPDATE trials SET result = ? WHERE id = ?",
+            (json.dumps(result, ensure_ascii=False), trial_id),
+        )
+
+
+def iter_trial_payloads(db_path: Path | None = None):
+    """遍历全部记录的 (id, payload, result)，供启动时按输入校正旧结果。"""
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT id, payload, result FROM trials ORDER BY id"
+        ).fetchall()
+    for r in rows:
+        yield r["id"], json.loads(r["payload"]), json.loads(r["result"])
+
+
 def delete_trial(trial_id: int, db_path: Path | None = None) -> bool:
     with _connect(db_path) as conn:
         cur = conn.execute("DELETE FROM trials WHERE id = ?", (trial_id,))
